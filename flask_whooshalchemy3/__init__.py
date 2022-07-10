@@ -30,6 +30,13 @@ from flask_sqlalchemy.model import Model
 
 logger = logging.getLogger(__name__)
 
+
+try:
+    unicode
+except NameError:
+    unicode = str
+
+
 try:
     BinaryType = sql_types.Binary
 except AttributeError:
@@ -331,4 +338,34 @@ def search_index(app: Flask, model: Type[Model]) -> Index:
     return index
 
 
+
+
 flask_sqlalchemy.models_committed.connect(_post_flush)
+
+
+def index_all(app):
+    """
+    Index all records in database.
+    """
+    all_modles = app.extensions[
+        'sqlalchemy'].db.Model.registry._class_registry.values()
+    models = [i for i in all_modles if hasattr(i, '__searchable__')]
+    idxs = [(m, search_index(app, m)) for m in models]
+    for model, idx in idxs:
+        print("Indexing %s...\t\t" % model.__name__, end='')
+        with idx.writer() as writer:
+            primary_field = model.whoosh.pk
+            searchable = model.__searchable__
+            all = model.query.all()
+            for v in all:
+                attrs = {}
+                for key in searchable:
+                    try:
+                        attrs[key] = unicode(getattr(v, key))
+                    except AttributeError:
+                        raise AttributeError(
+                            '{0} does not have {1} field {2}'
+                                .format(model, __searchable__, key))
+                attrs[primary_field] = unicode(getattr(v, primary_field))
+                writer.update_document(**attrs)
+        print("done")
